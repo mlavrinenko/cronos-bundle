@@ -2,6 +2,8 @@
 
 namespace MyBuilder\Bundle\CronosBundle\Exporter;
 
+use Doctrine\Common\Annotations\Annotation;
+use Doctrine\Common\Annotations\AnnotationReader;
 use MyBuilder\Bundle\CronosBundle\Annotation\Cron as CronAnnotation;
 use MyBuilder\Cronos\Formatter\Cron as CronFormatter;
 use Symfony\Component\Console\Command\Command;
@@ -10,6 +12,9 @@ class AnnotationCronExporter
 {
     const ALL_SERVERS = 'all';
 
+    /**
+     * @var AnnotationReader
+     */
     private $annotationsReader;
     private $config = array();
 
@@ -61,12 +66,26 @@ class AnnotationCronExporter
         return $cron;
     }
 
-    private function parseAnnotations($cron, Command $command, array $options)
+    private function parseAnnotations($cron, Command $command, array $options, $parsedClass = null)
     {
-        foreach ($this->getAnnotations($command) as $annotation) {
+        if (!$parsedClass) {
+            $parsedClass = get_class($command);
+        }
+
+        $annotationsFound = false;
+        foreach ($this->getAnnotations($parsedClass) as $annotation) {
             if ($this->annotationBelongsToServer($annotation, $options['serverName'])) {
                 $cron = $this->addLine($command, $annotation, $options, $cron);
+                $annotationsFound = true;
             }
+        }
+
+        // inherit annotations from mapped superclass
+        if (!$annotationsFound &&
+            ($parentClass = get_parent_class($parsedClass)) &&
+            $this->getAnnotation($parentClass, '\MyBuilder\Bundle\CronosBundle\Annotation\MappedSuperclass')
+        ) {
+            $this->parseAnnotations($cron, $command, $options, $parentClass);
         }
 
         return $cron;
@@ -94,11 +113,18 @@ class AnnotationCronExporter
         return $cron;
     }
 
-    private function getAnnotations(Command $command)
+    private function getAnnotations($command)
     {
         $reflectedClass = new \ReflectionClass($command);
 
         return $this->annotationsReader->getClassAnnotations($reflectedClass);
+    }
+
+    private function getAnnotation($command, $annotationName)
+    {
+        $reflectedClass = new \ReflectionClass($command);
+
+        return $this->annotationsReader->getClassAnnotation($reflectedClass, $annotationName);
     }
 
     /**
